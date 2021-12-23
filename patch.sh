@@ -100,17 +100,59 @@ else
 fi
 
 echo -e "${WHITE}Patche original App ...${NORMAL}"
+
+cat <<EOF
+Sollen die Online-Funktionen der Librelink-App deaktiviert werden?
+
+Mit deaktivierter Online-Funktionalität werden der Lizenz-Check und
+das Cloud-Messaging in der App deaktiviert.
+
+Es ist dann nicht mehr erforderlich, sich in der App mit Benutzername
+und Passwort anzumelden, und die App überträgt keine Daten mehr an
+den Hersteller.
+
+ACHTUNG: Ohne Online-Funktionen können KEINE Daten mehr an LibreView
+         übertragen werden!
+
+Wenn Sie LibreView benutzen, um Berichte zu erstellen, müssen Sie die
+Online-Funktionen aktiviert lassen! Ausserdem werden nur Werte über-
+tragen, die in der App selbst vorhanden sind, also solche, die per NFC
+(scannen am Sensor) übertragen wurden. Um in der App ein vollständiges
+Profil zu erhalten, müssen Sie deshalb mindestens alle 8 Stunden einmal
+den Sensor mit dem Handy per NFC scannen.
+
+EOF
+
+patches=0001-Add-forwarding-of-Bluetooth-readings-to-other-apps.patch
+while true ; do
+    read -p "Online-Funktionen deaktivieren? [J/n] " result
+    case ${result} in
+        J | j | Ja | ja | "" )
+            patches+=" 0002-Disable-uplink-features.patch"
+            appmode=Offline
+            break;;
+        n | N | nein | Nein )
+            appmode=Online
+            break;;
+        * )
+            echo "${RED}Bitte mit j oder n antworten!${NORMAL}";;
+    esac
+done
+
 cd /tmp/librelink/
-git apply --whitespace=nowarn --verbose ${WORKDIR}/xdrip2.git.patch
-if [ $? = 0 ]; then
-  echo -e "${GREEN}  okay.${NORMAL}"
-  echo
-else
-  echo -e "${RED}  nicht okay.${NORMAL}"
-  echo
-  echo -e "${YELLOW}=> Bitte prüfen Sie o.a. Fehler.${NORMAL}"
-  exit 1
-fi
+for patch in ${patches} ; do
+    echo -e "${WHITE}Patch : ${patch}${NORMAL}"
+    git apply --whitespace=nowarn --verbose "${WORKDIR}/${patch}"
+    if [ $? = 0 ]; then
+        echo -e "${GREEN}  okay.${NORMAL}"
+        echo
+    else
+        echo -e "${RED}  nicht okay.${NORMAL}"
+        echo
+        echo -e "${YELLOW}=> Bitte prüfen Sie o.a. Fehler.${NORMAL}"
+        exit 1
+    fi
+done
 
 echo -e "${WHITE}Verwende neuen Sourcecode für gepatchte App ...${NORMAL}"
 cp -Rv ${WORKDIR}/sources/* /tmp/librelink/smali_classes2/com/librelink/app/
@@ -168,7 +210,7 @@ echo -e "${GREEN}  okay."
 echo
 
 echo -e "${WHITE}Optimiere Ausrichtung der gepatchten APK Datei...${NORMAL}"
-zipalign -f -p 4 APK/librelink_unaligned.apk APK/${FILENAME}_patched.apk
+zipalign -p 4 APK/librelink_unaligned.apk APK/${FILENAME}_patched.apk
 if [ $? = 0 ]; then
   echo -e "${GREEN}  okay.${NORMAL}"
   echo
@@ -180,34 +222,30 @@ else
   exit 1
 fi
 
-if [ ! -f tools/libre-keystore.p12 ]; then
-  echo -e "${WHITE}Erstelle Keystore zum Signieren der gepatchten APK Datei ...${NORMAL}"
-  keytool -genkey -v -keystore tools/libre-keystore.p12 -storetype PKCS12 -alias "Libre Signer" -keyalg RSA -keysize 2048 --validity 10000 --storepass geheim --keypass geheim -dname "cn=Libre Signer, c=de"
-  if [ $? = 0 ]; then
-    echo -e "${GREEN}  okay.${NORMAL}"
-    echo
-  else
-    echo -e "${RED}  nicht okay.${NORMAL}"
-    echo
-    echo -e "${YELLOW}=> Bitte prüfen Sie o.a. Fehler.${NORMAL}"
-    exit 1
-  fi
+echo -e "${WHITE}Erstelle Keystore zum Signieren der gepatchten APK Datei ...${NORMAL}"
+keytool -genkey -v -keystore /tmp/libre-keystore.p12 -storetype PKCS12 -alias "Libre Signer" -keyalg RSA -keysize 2048 --validity 10000 --storepass geheim --keypass geheim -dname "cn=Libre Signer, c=de"
+if [ $? = 0 ]; then
+  echo -e "${GREEN}  okay.${NORMAL}"
+  echo
 else
-  echo -e "${WHITE}Verwende existierenden Keystore zum Signieren der gepatchten APK Datei ...${NORMAL}"
+  echo -e "${RED}  nicht okay.${NORMAL}"
+  echo
+  echo -e "${YELLOW}=> Bitte prüfen Sie o.a. Fehler.${NORMAL}"
+  exit 1
 fi
 
 echo -e "${WHITE}Signiere gepatchte APK Datei ...${NORMAL}"
 if [ -x /usr/lib/android-sdk/build-tools/debian/apksigner.jar ]; then
-  java -jar /usr/lib/android-sdk/build-tools/debian/apksigner.jar sign --ks-pass pass:geheim --ks tools/libre-keystore.p12 APK/${FILENAME}_patched.apk
+  java -jar /usr/lib/android-sdk/build-tools/debian/apksigner.jar sign --ks-pass pass:geheim --ks /tmp/libre-keystore.p12 APK/${FILENAME}_patched.apk
 elif [ -x /usr/share/apksigner/apksigner.jar ]; then
-  java -jar /usr/share/apksigner/apksigner.jar sign --ks-pass pass:geheim --ks tools/libre-keystore.p12 APK/${FILENAME}_patched.apk
+  java -jar /usr/share/apksigner/apksigner.jar sign --ks-pass pass:geheim --ks /tmp/libre-keystore.p12 APK/${FILENAME}_patched.apk
 else
-  apksigner sign --ks-pass pass:geheim --ks tools/libre-keystore.p12 APK/${FILENAME}_patched.apk
+  apksigner sign --ks-pass pass:geheim --ks /tmp/libre-keystore.p12 APK/${FILENAME}_patched.apk
 fi
 if [ $? = 0 ]; then
   echo -e "${GREEN}  okay.${NORMAL}"
   echo
-  # rm /tmp/libre-keystore.p12
+  rm /tmp/libre-keystore.p12
 else
   echo -e "${RED}  nicht okay.${NORMAL}"
   echo
@@ -234,4 +272,11 @@ if [ -d /mnt/c/ ]; then
   fi
 else
   echo -e "${YELLOW}Fertig! Die gepatchte und signierte APK Datei finden Sie unter APK/${FILENAME}_patched.apk${NORMAL}"
+fi
+
+echo -en "${GREEN}Die gepatchte App läuft im ${appmode}-Modus"
+if [[ ${appmode} == Online ]] ; then
+  echo -e " (mit LibreView-Unterstützung)${NORMAL}"
+else
+  echo -e " (ohne LibreView-Unterstützung)${NORMAL}"
 fi
